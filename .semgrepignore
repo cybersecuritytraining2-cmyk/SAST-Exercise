@@ -1,0 +1,17 @@
+# Paths Semgrep should not scan. Excluding noise at the source is the cheapest
+# way to cut false positives — but only for code that genuinely should not be
+# assessed (generated code, vendored deps, fixtures, migrations).
+#
+# Semgrep already ignores common dependency/build dirs by default; these are
+# project-specific additions you would tune for a real repo.
+
+# Vendored / third-party code we don't own
+vendor/
+third_party/
+
+# Generated artefacts and migrations (reviewed separately, not by app rules)
+**/migrations/
+*_pb2.py
+
+# Test fixtures often contain deliberately "bad" snippets that aren't shipped
+tests/fixtures/

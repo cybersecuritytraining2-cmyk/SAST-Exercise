@@ -1,0 +1,27 @@
+# A *tuned* replacement for the noisy registry SQL rules on this codebase.
+#
+# It is a taint rule: it only fires when request data actually reaches a query
+# sink AND has not passed through a recognised sanitiser. `safe_sort()` returns
+# an allow-listed literal, so we register it as a sanitiser — the /users/v2
+# route stops being a finding, while a genuinely unvalidated query still fires.
+#
+# Run just this rule:
+#   semgrep scan --config .semgrep/rules/sql-order-by-taint.yml
+rules:
+  - id: metricshub-sqli-order-by
+    mode: taint
+    message: >
+      User input reaches a SQL query without passing through safe_sort().
+      Validate the column against the allow-list (safe_sort) before use.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      confidence: HIGH
+      references:
+        - https://semgrep.dev/docs/writing-rules/data-flow/taint-mode
+    pattern-sources:
+      - pattern: request.args.get(...)
+    pattern-sanitizers:
+      - pattern: safe_sort(...)
+    pattern-sinks:
+      - pattern: $CUR.execute(...)
