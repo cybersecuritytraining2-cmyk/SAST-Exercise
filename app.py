@@ -10,7 +10,7 @@ Scan the app (the point):  see README.md
 
 import sqlite3
 
-from flask import Flask, request, abort, render_template_string
+from flask import Flask, request, abort, render_template_string, Response
 from markupsafe import escape
 
 from metricshub import queries, reporting
@@ -25,6 +25,110 @@ app = Flask(__name__)
 def get_cursor():
     conn = sqlite3.connect("metricshub.db")
     return conn.cursor()
+
+
+@app.get("/")
+def index():
+    return Response("""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MetricsHub — SAST Triage Exercise</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; padding: 2rem; }
+    header { max-width: 800px; margin: 0 auto 2.5rem; }
+    h1 { font-size: 1.75rem; font-weight: 700; color: #f8fafc; }
+    h1 span { color: #38bdf8; }
+    .subtitle { margin-top: .5rem; color: #94a3b8; font-size: .95rem; }
+    .grid { max-width: 800px; margin: 0 auto; display: grid; gap: 1rem; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: .75rem; padding: 1.25rem 1.5rem; }
+    .card-header { display: flex; align-items: center; gap: .75rem; margin-bottom: .5rem; }
+    .badge { font-size: .7rem; font-weight: 700; padding: .2rem .55rem; border-radius: 9999px; text-transform: uppercase; letter-spacing: .05em; }
+    .fp  { background: #1e3a5f; color: #7dd3fc; }
+    .tp  { background: #4c1d1d; color: #fca5a5; }
+    .card h2 { font-size: 1rem; font-weight: 600; color: #f1f5f9; }
+    .card p  { font-size: .875rem; color: #94a3b8; margin-top: .35rem; line-height: 1.5; }
+    .links { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .85rem; }
+    .links a { font-size: .8rem; font-family: monospace; background: #0f172a; color: #38bdf8;
+               border: 1px solid #1e40af; border-radius: .4rem; padding: .25rem .6rem;
+               text-decoration: none; transition: background .15s; }
+    .links a:hover { background: #1e3a5f; }
+    footer { max-width: 800px; margin: 2.5rem auto 0; font-size: .8rem; color: #475569; text-align: center; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Metrics<span>Hub</span></h1>
+    <p class="subtitle">SAST false-positive triage exercise &mdash; 18 Semgrep findings, one real bug. Can you tell them apart?</p>
+  </header>
+
+  <div class="grid">
+
+    <div class="card">
+      <div class="card-header">
+        <span class="badge fp">FP &mdash; Challenge 1</span>
+        <h2>Constant SQL (no user input)</h2>
+      </div>
+      <p>Semgrep flags string-built queries regardless of where the data comes from. These queries use only module constants &mdash; no injection risk.</p>
+      <div class="links">
+        <a href="/stats/active">/stats/active</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="badge fp">FP &mdash; Challenge 2</span>
+        <h2>Reflected input, HTML-escaped</h2>
+      </div>
+      <p><code>markupsafe.escape()</code> converts <code>&amp; &lt; &gt; " '</code> to HTML entities before output &mdash; the value renders as inert text, not markup.</p>
+      <div class="links">
+        <a href="/hello?name=Alice">/hello?name=Alice</a>
+        <a href="/hello?name=&lt;b&gt;bold&lt;/b&gt;">/hello?name=&lt;b&gt;bold&lt;/b&gt;</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="badge fp">FP &mdash; Challenge 3</span>
+        <h2>User input validated before SQL</h2>
+      </div>
+      <p>Taint rules correctly trace <code>sort</code> from the query string to the SQL sink but miss the allow-list guard. Try the guard-clause and sanitiser variants.</p>
+      <div class="links">
+        <a href="/users?sort=email">/users?sort=email &nbsp;(guard clause)</a>
+        <a href="/users/v2?sort=email">/users/v2?sort=email &nbsp;(sanitiser)</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="badge fp">FP &mdash; Challenge 4</span>
+        <h2>shell=True, but only constants</h2>
+      </div>
+      <p>The subprocess command is assembled from module constants and a fixed dict &mdash; no user-controlled data reaches the shell.</p>
+      <div class="links">
+        <a href="#" onclick="fetch('/admin/sync',{method:'POST'}).then(r=>r.json()).then(d=>alert(JSON.stringify(d)));return false;">/admin/sync (POST)</a>
+      </div>
+    </div>
+
+    <div class="card" style="border-color:#7f1d1d;">
+      <div class="card-header">
+        <span class="badge tp">TRUE POSITIVE</span>
+        <h2>Server-Side Template Injection</h2>
+      </div>
+      <p><code>escape()</code> only neutralises HTML characters &mdash; it does <strong>not</strong> escape <code>{{ }}</code>. <code>render_template_string</code> evaluates Jinja, so user input like <code>&#123;&#123;7*7&#125;&#125;</code> executes on the server.</p>
+      <div class="links">
+        <a href="/welcome?name=Alice">/welcome?name=Alice</a>
+        <a href="/welcome?name={{7*7}}">/welcome?name=&#123;&#123;7*7&#125;&#125;</a>
+      </div>
+    </div>
+
+  </div>
+
+  <footer>Run <code>semgrep scan --config p/default --config p/python --config p/flask</code> from the exercise directory to generate the 18 findings.</footer>
+</body>
+</html>""", mimetype="text/html")
 
 
 @app.get("/stats/active")
