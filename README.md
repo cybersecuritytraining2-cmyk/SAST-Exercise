@@ -63,10 +63,12 @@ source sastvenv/bin/activate      # Windows: sastvenv\Scripts\activate
 pip install -r requirements.txt
 
 # start the dev server
-flask --app app run --debug
+flask --app app run --debug --port 5001
 ```
 
-The app will be available at <http://127.0.0.1:5000>.
+The app will be available at <http://127.0.0.1:5001>.
+
+> Port 5000 is reserved on this machine (MCP server). Use `--port 5001` or any other free port.
 
 > Running the app is not required — every challenge can be worked through by reading
 > the code and the scan output alone.
