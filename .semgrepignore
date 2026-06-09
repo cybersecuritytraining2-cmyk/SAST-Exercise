@@ -5,10 +5,14 @@
 # Semgrep already ignores common dependency/build dirs by default; these are
 # project-specific additions you would tune for a real repo.
 
-# Local virtual environment
+# Local virtual environment — cover common naming conventions
 sastvenv/
 .venv/
 venv/
+env/
+.env/
+*venv*/
+*env*/
 
 # Vendored / third-party code we don't own
 vendor/

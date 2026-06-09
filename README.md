@@ -39,8 +39,9 @@ hide in normal-looking code, not in obviously contrived snippets.
 ## Prerequisites
 
 - **Python 3.9+**
-- **Semgrep**: `pipx install semgrep` (or `pip install --user semgrep`) — see
-  <https://semgrep.dev/docs/getting-started/>
+- **Semgrep 1.x+**: `pipx install semgrep` (or `pip install --user semgrep`) — see
+  <https://semgrep.dev/docs/getting-started/>. Older versions do not automatically
+  limit scans to git-tracked files and will produce many more findings.
 - Network access the first time you run (Semgrep downloads the registry rulesets).
 
 Installing the app's own deps is optional — you are scanning the code, not running it:
