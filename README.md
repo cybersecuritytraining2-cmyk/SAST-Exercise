@@ -50,6 +50,29 @@ pip install -r requirements.txt   # only needed if you want to run the app
 
 ---
 
+## Run the app (optional)
+
+If you want to interact with MetricsHub in a browser while you triage:
+
+```bash
+# create and activate a virtual environment (recommended)
+python3 -m venv sastvenv
+source sastvenv/bin/activate      # Windows: sastvenv\Scripts\activate
+
+# install dependencies
+pip install -r requirements.txt
+
+# start the dev server
+flask --app app run --debug
+```
+
+The app will be available at <http://127.0.0.1:5000>.
+
+> Running the app is not required — every challenge can be worked through by reading
+> the code and the scan output alone.
+
+---
+
 ## Run the scan
 
 From the exercise directory:
