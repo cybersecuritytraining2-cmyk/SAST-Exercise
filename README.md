@@ -68,7 +68,7 @@ flask --app app run --debug --port 5001
 
 The app will be available at <http://127.0.0.1:5001>.
 
-> Port 5000 is reserved on this machine (MCP server). Use `--port 5001` or any other free port.
+> Port 5000 may be reserved on your machine. Use `--port 5001` or any other free port.
 
 > Running the app is not required — every challenge can be worked through by reading
 > the code and the scan output alone.
@@ -77,74 +77,87 @@ The app will be available at <http://127.0.0.1:5001>.
 
 ## Run the scan
 
-From the exercise directory:
+From the **exercise directory** (`SAST-False-Positives/`):
 
 ```bash
-semgrep scan --config p/default --config p/python --config p/flask
+semgrep scan --config p/default
 ```
 
 You'll get **18 findings** across six locations (several lines trip more than one
-rule). Work through each below before reading the verdict.
-For a compact machine-readable view:
+rule). Work through each challenge below before reading the verdict.
 
+> **Important:** run this command from inside the `SAST-False-Positives/` directory.
+> Running it from a parent directory will scan unrelated files and produce many more findings.
+
+### Save output to a file
+
+Plain text (same as terminal output):
 ```bash
-semgrep scan --config p/default --config p/python --config p/flask --json \
-  | jq -r '.results[] | "\(.path):\(.start.line)  \(.check_id | split(".") | last)"' | sort -u
+semgrep scan --config p/default --output findings.txt
+```
+
+Compact one-line-per-finding summary:
+```bash
+semgrep scan --config p/default --json \
+  | jq -r '.results[] | "\(.path):\(.start.line)  \(.check_id | split(".") | last)"' \
+  | sort -u | tee findings-summary.txt
+```
+
+Full JSON (machine-readable, preserves all metadata):
+```bash
+semgrep scan --config p/default --json --output findings.json
 ```
 
 ---
 
 ## The challenges
 
-### Challenge 1 — "concatenated SQL", but no user input
+For each finding, trace the data flow from source to sink and decide: can user-controlled
+input actually reach the dangerous operation? If not, it is a false positive.
+
+### Challenge 1 — concatenated SQL
 **Where:** `metricshub/queries.py` → `count_active_users`, `recent_signups`
 **Semgrep says:** `formatted-sql-query`, `sqlalchemy-execute-raw-query`
-**Verdict: FALSE POSITIVE.** These rules are **pattern-based** — they match *any*
-string-built query, regardless of where the data comes from. The only interpolated
-values here are a module constant (`STATUS_ACTIVE`) and an integer from an internal
-scheduler. No user input reaches the query, so there is no injection.
-**Note the nuance:** the same constant-SQL pattern in Ruby or JavaScript would
-**not** be flagged, because those registry rules are taint-based — a reminder that
-"is it flagged?" depends on the rule's engine, not just the code.
 
-### Challenge 2 — reflected input that is escaped before output
+The rules flag *any* string-built query, regardless of where the data comes from.
+Look at what values are actually interpolated into these queries.
+
+**Note the nuance:** the same constant-SQL pattern in Ruby or JavaScript would
+**not** be flagged by those registry rules — a reminder that "is it flagged?" depends
+on the rule's engine, not just the code.
+
+### Challenge 2 — reflected input
 **Where:** `app.py` → `/hello`
 **Semgrep says:** `raw-html-format`, `directly-returned-format-string`
-**Verdict: FALSE POSITIVE.** The user's `name` is wrapped in `markupsafe.escape()`,
-which converts `& < > " '` to HTML entities before it reaches the response. The
-browser renders it as inert text, so there is no XSS. Semgrep sees "request data
-concatenated into an HTML response" and flags the shape, not the escaping.
 
-### Challenge 3 — user input that *is* validated first
+The user's `name` is processed before it reaches the response. Read the line carefully —
+what does `markupsafe.escape()` do to `& < > " '`?
+
+### Challenge 3 — user input into SQL
 **Where:** `app.py` → `/users` (guard clause) and `/users/v2` (sanitiser)
 **Semgrep says:** `tainted-sql-string`, `sql-injection-db-cursor-execute`,
 `sqlalchemy-execute-raw-query`
-**Verdict: FALSE POSITIVE — and the most interesting one.** The `sort` column really
-does come from `request.args`, so **taint-based** rules correctly trace it to the
-query. What they miss is the validation in between:
-- `/users` uses a **guard clause** (`if not is_allowed_sort(sort): abort(400)`). The
-  value can only ever be an allow-listed column by the time it reaches the query —
-  but because the guard doesn't *transform* the value, the taint engine can't tell.
-- `/users/v2` uses `safe_sort()`, which **returns** a value that is provably one of a
-  fixed set of literals. This is the form a scanner can be taught to trust (below).
 
-### Challenge 4 — `shell=True` command built from constants
+The `sort` column really does come from `request.args`, so taint-based rules correctly
+trace it to the query. Look at what happens to it *between* the request and the query:
+- `/users` uses a **guard clause** — what does it check? Can the value be anything
+  other than an allow-listed column by the time it reaches the query?
+- `/users/v2` uses `safe_sort()` — what does that function return?
+
+### Challenge 4 — `shell=True`
 **Where:** `metricshub/reporting.py` → `sync_exports`
 **Semgrep says:** `subprocess-shell-true` / `dangerous-subprocess-use`
-**Verdict: FALSE POSITIVE.** The command string is assembled entirely from module
-constants and a value looked up from a fixed `INTERVALS` dict — never from the raw
-argument. No user-controlled data reaches the shell. (`shell=False` with a list of
-args is still the better habit; see "fix the code" below.)
 
-### Contrast — the one that is REAL
+`shell=True` is risky when user input reaches the shell. Trace where the command
+string comes from. Is any part of it user-controlled?
+
+### Contrast — a finding that looks similar to Challenge 2
 **Where:** `app.py` → `/welcome`
 **Semgrep says:** `render-template-string`, `raw-html-format`
-**Verdict: TRUE POSITIVE — do not suppress this.** It looks almost identical to the
-`/hello` false positive: user input, escaped with `escape()`, returned as HTML. But
-`render_template_string` **evaluates Jinja**, and `escape()` only touches HTML
-characters — it does **not** escape `{{ }}`. Input like `{{7*7}}` (or worse) is
-**server-side template injection**. The lesson: two findings can look the same to a
-scanner *and* to a careless reviewer; only the data flow tells you which is real.
+
+It looks almost identical to the `/hello` endpoint: user input, `escape()`, returned
+as HTML. What is different about how the response is generated here? Does `escape()`
+protect against the same things in both cases?
 
 ---
 
@@ -154,8 +167,7 @@ Apply these roughly in order. The goal is a quiet, trustworthy scan — not a si
 
 ### 0. Triage before you suppress
 Understand the data flow first. A finding is only an FP once you can articulate *why*
-the dangerous input can't reach the sink. Suppressing on a hunch is how the `/welcome`
-bug ships.
+the dangerous input can't reach the sink. Suppressing on a hunch is how real bugs ship.
 
 ### 1. Inline suppression — `# nosemgrep` (for individual, reviewed findings)
 Put the comment **on the same line as the finding**:
@@ -175,7 +187,7 @@ several ids (comma-separated) or the bare form. Always pair it with a comment sa
 Don't scan code you don't assess: vendored deps, generated files, migrations, test
 fixtures. See the included `.semgrepignore`. One-off:
 ```bash
-semgrep scan --config p/python --exclude 'tests/fixtures/*'
+semgrep scan --config p/default --exclude 'tests/fixtures/*'
 ```
 
 ### 3. Tune the rule — custom taint rule with a sanitiser
@@ -195,8 +207,7 @@ a curated config that omits it).
 > **returns a known-good value** is both easier to verify and better security design.
 
 ### 4. Fix the code so the finding is true *and* gone
-Often the cleanest "FP reduction" is to remove the risky shape entirely — which also
-removes the real risk class:
+Often the cleanest "FP reduction" is to remove the risky shape entirely:
 - **Parameterise** queries: `cur.execute("... WHERE status = ?", (status,))` instead of `%`-formatting.
 - For dynamic identifiers (ORDER BY), map through an allow-list that **returns** the column (`safe_sort`).
 - **`shell=False`** with a list: `subprocess.run(["rsync", "-a", src, dst])`.
@@ -210,21 +221,21 @@ removes the real risk class:
   is auditable — better than scattering suppressions through the code.
 
 ### 6. Config hygiene
-Prefer curated, intentional rulesets (`--config p/python`, a pinned ruleset, or your
+Prefer curated, intentional rulesets (`--config p/default`, a pinned ruleset, or your
 own pack) over a kitchen-sink scan. Filter by severity/confidence when you need signal
 fast: `--severity ERROR`.
 
 ---
 
-## Summary
+## Summary table
 
-| # | Location | Rule(s) | Verdict | Action |
-|---|----------|---------|---------|--------|
-| 1 | `queries.py` (active/signups) | formatted-sql-query, sqlalchemy-execute-raw-query | False positive (no user input) | `# nosemgrep` + comment, or parameterise |
-| 2 | `/hello` | raw-html-format, directly-returned-format-string | False positive (escaped) | `# nosemgrep`, or render via template |
-| 3 | `/users`, `/users/v2` | tainted-sql-string, sql-injection-db-cursor-execute | False positive (validated) | Custom taint rule w/ `safe_sort` sanitiser |
-| 4 | `reporting.py` | subprocess-shell-true | False positive (constants only) | `# nosemgrep`, or `shell=False` + list |
-| ⚠ | `/welcome` | render-template-string, raw-html-format | **TRUE POSITIVE (SSTI)** | **Fix it** — don't render user input as a template |
+| # | Location | Rule(s) | Action |
+|---|----------|---------|--------|
+| 1 | `queries.py` (active/signups) | formatted-sql-query, sqlalchemy-execute-raw-query | `# nosemgrep` + comment, or parameterise |
+| 2 | `/hello` | raw-html-format, directly-returned-format-string | `# nosemgrep`, or render via template |
+| 3 | `/users`, `/users/v2` | tainted-sql-string, sql-injection-db-cursor-execute | Custom taint rule w/ `safe_sort` sanitiser |
+| 4 | `reporting.py` | subprocess-shell-true | `# nosemgrep`, or `shell=False` + list |
+| 5 | `/welcome` | render-template-string, raw-html-format | See answer key below |
 
 ### Key takeaways
 - **Know the engine.** Pattern-based rules flag a *shape* (Challenge 1 fires even with
@@ -232,8 +243,7 @@ fast: `--severity ERROR`.
   validation they can't model.
 - **A false positive is not "ignore me" — it's "explain me."** You only know it's an FP
   once you've traced the data flow.
-- **Never blanket-suppress.** The `/welcome` SSTI is one careless `# nosemgrep` away
-  from shipping. Suppress specific, reviewed findings — with a reason.
+- **Never blanket-suppress.** Suppress specific, reviewed findings — with a reason.
 - **Tune, don't just mute.** Encoding your sanitisers as rules fixes the whole class of
   noise and keeps catching the real thing.
 
@@ -243,3 +253,27 @@ fast: `--severity ERROR`.
   (or one function) away from the sink.
 - **Tooling:** re-run with the tuned rule and with suppressions to confirm the scan goes
   quiet *without* dropping the true positive.
+
+---
+
+---
+
+## Answer key
+
+> **Stop here if you haven't worked through the challenges yet.**
+
+<details>
+<summary>Reveal verdicts</summary>
+
+| # | Location | Verdict | Reason |
+|---|----------|---------|--------|
+| 1 | `queries.py` | **FALSE POSITIVE** | Only module constants are interpolated — no user input reaches the query. Rules are pattern-based and fire regardless of data origin. |
+| 2 | `/hello` | **FALSE POSITIVE** | `markupsafe.escape()` converts `& < > " '` to HTML entities. The value renders as inert text; no XSS. |
+| 3 | `/users`, `/users/v2` | **FALSE POSITIVE** | The taint trace is real, but `/users` rejects any value not on the allow-list before it reaches the query; `/users/v2` returns a provably safe literal from `safe_sort()`. |
+| 4 | `reporting.py` | **FALSE POSITIVE** | The shell command is assembled from module constants and a fixed dict — no user-controlled data reaches the shell. |
+| 5 | `/welcome` | **TRUE POSITIVE — do not suppress** | `escape()` neutralises HTML characters but does **not** escape `{{ }}`. `render_template_string` evaluates Jinja, so input like `{{7*7}}` executes on the server — **Server-Side Template Injection (SSTI)**. Fix it; don't suppress it. |
+
+The lesson: two findings can look identical to a scanner *and* to a careless reviewer
+(`/hello` vs `/welcome`). Only tracing the data flow reveals which is real.
+
+</details>
